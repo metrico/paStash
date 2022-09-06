@@ -9,12 +9,13 @@ function InputProm() {
   this.mergeConfig(this.unserializer_config());
   this.mergeConfig({
     name: 'Prom',
-    optional_params: ['url', 'interval', 'debug', 'meta', 'prefix'],
+    optional_params: ['url', 'interval', 'debug', 'meta', 'prefix', 'flat'],
     default_values: {
       'url': false,
       'meta': false,
       'prefix': false,
       'interval': 5000,
+      'flat': true,
       'debug': false
     },
     start_hook: this.start,
@@ -24,27 +25,34 @@ function InputProm() {
 util.inherits(InputProm, base_input.BaseInput);
 
 InputProm.prototype.start = function(callback) {
-  if (!this.url) { logger.info('Missing Endpoint!'); return; }
-  logger.info('Start Prom Scraper...', this.url);
+  if (!this.url) { logger.info('Missing /metrics endpoint!'); return; }
+  logger.info('Start Prometheus Scraper...', this.url);
   try {
 	this.scrape = async function(){
 	    const scrapeResult = await prometheusScraper.scrapePrometheusMetrics({
-	        url: this.url || 'http://demo.robustperception.io:9100/metrics'
+	        url: this.url
 	    });
-	    const convertedMetrics = prometheusScraper.convertToHecMultiMetrics(scrapeResult.metrics, {
-	        timestamp: Date.now(),
-	        namePrefix: this.prefix || '',
-	        metadata: this.meta || {}
-	    });
-	    for (const Metrics of convertedMetrics) {
-	        console.log(Metrics);
-                 this.emit('data', { message: Metrics.measurements, ...Metrics.fields });
-	    }
+	    if (scrapeResult.metrics){
+              for (const Metrics of scrapeResult.metrics) {
+                const labels = Metrics.labels.reduce((acc, it) => {
+                  acc[it.name] = it.value;
+                  return acc;
+                }, { name: Metrics.name, metric: Metrics.type });
+		if (this.flat) {
+			labels.value = parseFloat(Metrics.value);
+                	this.emit('data', labels );
+
+		} else {
+                	this.emit('data', { labels: labels, value: parseFloat(Metrics.value)} );
+		}
+              }
+            }
 	}.bind(this);
 
 	this.runner =  setInterval(function() {
 	    this.scrape();
 	}.bind(this), this.interval);
+	callback();
 
   } catch(e) { logger.error(e); }
 };
